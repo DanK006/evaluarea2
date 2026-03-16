@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🍒 CLASSIC PAC-MAN · BIG & AUTHENTIC</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+        }
+        body {
+            min-height: 100vh;
+            margin: 0;
+            background: radial-gradient(circle at 20% 30%, #1e2b3f, #0a0f1a);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        .game-container {
+            background: #0b101a;
+            padding: 2rem 2rem 2.5rem;
+            border-radius: 4rem 4rem 3rem 3rem;
+            box-shadow: 0 25px 40px black, inset 0 0 10px #3f6180;
+            border: 3px solid #3c6080;
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+            border-radius: 2.5rem;
+            background: #000212;
+            box-shadow: 0 0 0 4px #1f3c5a, 0 20px 30px black;
+            image-rendering: crisp-edges;
+            width: 630px;
+            height: 630px;
+        }
+        .dashboard {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 1.5rem 0.8rem 0.3rem;
+            color: #fadd9b;
+            text-shadow: 0 3px 0 #7a4f1a;
+            font-weight: bold;
+            font-size: 2rem;
+        }
+        .score-panel {
+            background: #1f2638;
+            padding: 0.5rem 2rem;
+            border-radius: 4rem;
+            border: 2px solid #dba959;
+            color: #ffd966;
+            font-size: 2.4rem;
+            font-weight: 900;
+            box-shadow: inset 0 -4px 0 #4d3518;
+        }
+        button {
+            background: #f0b426;
+            border: none;
+            color: #241a09;
+            font-weight: bold;
+            font-size: 1.8rem;
+            padding: 0.6rem 2.5rem;
+            border-radius: 4rem;
+            font-family: inherit;
+            letter-spacing: 2px;
+            box-shadow: 0 9px 0 #a56f18, 0 10px 18px black;
+            transition: 0.07s;
+            cursor: pointer;
+            border: 1px solid #ffcf8a;
+        }
+        button:active {
+            transform: translateY(7px);
+            box-shadow: 0 2px 0 #a56f18, 0 8px 12px black;
+        }
+        .status-area {
+            color: #b7dcff;
+            font-size: 1.7rem;
+            text-align: center;
+            margin-top: 1.2rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            background: #1b2533e0;
+            padding: 0.4rem 2rem;
+            border-radius: 4rem;
+            backdrop-filter: blur(2px);
+            border: 1px solid #45759b;
+        }
+    </style>
+</head>
+<body>
+<div class="game-container">
+    <canvas id="gameCanvas" width="630" height="630"></canvas>
+    <div class="dashboard">
+        <span>🍒</span>
+        <span class="score-panel" id="scoreDisplay">0</span>
+        <button id="restartBtn">↻ NEW</button>
+    </div>
+    <div class="status-area" id="statusMessage">READY!  ▲ ▼ ◀ ▶</div>
+</div>
+<script>
+(function() {
+    // ---------- CONSTANTS & CONFIG ----------
+    const TILE_SIZE = 30;               // 21x21 grid → 630px
+    const ROWS = 21;
+    const COLS = 21;
+    const PACMAN_SPEED = 2.4;
+    const GHOST_SPEED = 2.1;              // slightly slower for fairness
+
+    // ---------- MAZE DEFINITION (compact but classic) ----------
+    // 'W' = wall, '.' = pellet, 'P' = power pellet, 'G' = ghost gate (ghosts pass, pacman can't)
+    // ' ' = empty (inside ghost house)
+    const MAZE = [
+        "WWWWWWWWWWWWWWWWWWWWW",
+        "W........W........W",
+        "W.WWWWW.W.W.WWWWW.W",
+        "W.P....W...W....P.W",
+        "W.WWWWW.WWWWWWWWW.W",
+        "W.................W",
+        "W.WWW.WWWWWWWW.WWW.W",
+        "W...W....W....W...W",
+        "WWWWW.WWW W WWW.WWWW",   // ghost house row (gate at col 10)
+        "W.....W  G  W.....W",    // 'G' is gate (row 9, col 10)
+        "WWWWW.W     W.WWWWW",    // inside ghost house (rows 10-11, cols 9-11)
+        "W.....W     W.....W",
+        "WWWWW.W WWW W.WWWWW",
+        "W........W........W",
+        "W.WWWWW.W.W.WWWWW.W",
+        "W.P....W...W....P.W",
+        "W.WWWWW.WWWWWWWWW.W",
+        "W.................W",
+        "W.WWWWWWWWWWWWWWW.W",
+        "W........W........W",
+        "WWWWWWWWWWWWWWWWWWWWW"
+    ];
+
+    // ---------- UTILITIES ----------
+    function gridToPixels(row, col) {
+        return { x: col * TILE_SIZE + TILE_SIZE/2, y: row * TILE_SIZE + TILE_SIZE/2 };
+    }
+
+    function pixelsToTile(px, py) {
+        return { row: Math.floor(py / TILE_SIZE), col: Math.floor(px / TILE_SIZE) };
+    }
+
+    function isWallForPacman(row, col) {
+        if (row < 0 || row >= ROWS || col < 0 || col >= COLS) return true;
+        const ch = MAZE[row][col];
+        return ch === 'W' || ch === 'G';   // gate is wall for pacman
+    }
+
+    function isWallForGhost(row, col) {
+        if (row < 0 || row >= ROWS || col < 0 || col >= COLS) return true;
+        const ch = MAZE[row][col];
+        return ch === 'W';   // gate is passable for ghosts
+    }
+
+    // tunnel wrap (left/right edges)
+    function handleWrap(px, py) {
+        let x = px;
+        if (x < 0) x = COLS * TILE_SIZE - TILE_SIZE/2;
+        if (x > COLS * TILE_SIZE) x = TILE_SIZE/2;
+        return x;
+    }
+
+    // distance between tiles (for ghost AI)
+    function tileDistance(r1,c1,r2,c2) {
+        return Math.abs(r1 - r2) + Math.abs(c1 - c2);
+    }
+
+    // ---------- GLOBAL STATE ----------
+    let gameActive = false;
+    let gameOverFlag = false;
+    let winFlag = false;
+    let readyTimer = 30; // frames to show ready message
+
+    let pellets = [];            // boolean for pellets
+    let powerPellets = [];       // boolean for power pellets
+    let pelletCount = 0;
+
+    let score = 0;
+    let ghostScoreMultiplier = 1; // 200,400,800,1600 for consecutive eats
+
+    // Pac-Man
+    let pacman = {
+        x: 0, y: 0,
+        dir: { dx: 1, dy: 0 },
+        nextDir: { dx: 1, dy: 0 }
+    };
+
+    // Ghosts data
+    const ghostNames = ['blinky','pinky','inky','clyde'];
+    let ghosts = [];
+
+    // Ghost modes (global)
+    const GHOST_MODE = { SCATTER: 0, CHASE: 1, FRIGHTENED: 2, EATEN: 3 };
+    let globalMode = GHOST_MODE.CHASE;      // start with chase, but will alternate
+    let modeTimer = 0;
+    let scatterChaseSwitch = 0; // 0 scatter, 1 chase, etc.
+
+    // frightened timer
+    let frightenedTimer = 0;
+    const FRIGHTENED_DURATION = 400; // frames ~8 seconds at 60fps
+
+    // ---------- INIT / RESET ----------
+    function resetGame() {
+        // Build pellets & power pellets
+        pellets = [];
+        powerPellets = [];
+        pelletCount = 0;
+        for (let r = 0; r < ROWS; r++) {
+            let pelletRow = [];
+            let powerRow = [];
+            for (let c = 0; c < COLS; c++) {
+                const ch = MAZE[r][c];
+                if (ch === '.') {
+                    pelletRow.push(true);
+                    powerRow.push(false);
+                    pelletCount++;
+                } else if (ch === 'P') {
+                    pelletRow.push(false);
+                    powerRow.push(true);
+                    pelletCount++;   // power pellet counts as pellet too
+                } else {
+                    pelletRow.push(false);
+                    powerRow.push(false);
+                }
+            }
+            pellets.push(pelletRow);
+            powerPellets.push(powerRow);
+        }
+
+        // Pac-Man start (row 17, col 9) -> near bottom
+        let startPos = gridToPixels(17, 9);
+        pacman.x = startPos.x;
+        pacman.y = startPos.y;
+        pacman.dir = { dx: 1, dy: 0 };
+        pacman.nextDir = { dx: 1, dy: 0 };
+
+        // Ghosts starting positions (inside ghost house)
+        const ghostStarts = [
+            { row: 10, col: 9 },  // blinky (red)
+            { row: 10, col: 10 }, // pinky (pink)
+            { row: 10, col: 11 }, // inky (cyan)
+            { row: 11, col: 10 }  // clyde (orange)
+        ];
+        ghosts = [];
+        for (let i = 0; i < 4; i++) {
+            let { row, col } = ghostStarts[i];
+            // remove pellet in ghost house (if any)
+            if (pellets[row] && pellets[row][col]) {
+                pellets[row][col] = false;
+                pelletCount--;
+            }
+            if (powerPellets[row] && powerPellets[row][col]) {
+                powerPellets[row][col] = false;
+                pelletCount--;
+            }
+            let pos = gridToPixels(row, col);
+            let ghost = {
+                id: i,
+                x: pos.x, y: pos.y,
+                dir: { dx: i===0?1:-1, dy: 0 }, // random start dir
+                mode: GHOST_MODE.CHASE,
+                scatterTarget: { row: 0, col: 20 }, // will set individually
+                // personal scatter corners:
+                // blinky top-right, pinky top-left, inky bottom-right, clyde bottom-left
+                color: ['#ff3a3a', '#ffa5d2', '#6dd5ff', '#ffb347'][i],
+                edibleTimer: 0,
+                returnToHouse: false,
+                housePos: { row: 10, col: 10 } // center of house
+            };
+            ghosts.push(ghost);
+        }
+        // set scatter targets
+        ghosts[0].scatterTarget = { row: 0, col: 20 };   // blinky top-right
+        ghosts[1].scatterTarget = { row: 0, col: 0 };    // pinky top-left
+        ghosts[2].scatterTarget = { row: 20, col: 20 };  // inky bottom-right
+        ghosts[3].scatterTarget = { row: 20, col: 0 };   // clyde bottom-left
+
+        // Reset global mode
+        globalMode = GHOST_MODE.CHASE;
+        modeTimer = 0;
+        scatterChaseSwitch = 0;
+        frightenedTimer = 0;
+
+        score = 0;
+        ghostScoreMultiplier = 1;
+        gameActive = true;
+        gameOverFlag = false;
+        winFlag = false;
+        readyTimer = 40;  // short "ready" period
+        updateScore();
+        statusDiv.innerText = 'READY!  ▲ ▼ ◀ ▶';
+    }
+
+    // ---------- GHOST AI TARGET ----------
+    function getGhostTarget(ghost) {
+        if (ghost.mode === GHOST_MODE.EATEN) {
+            return ghost.housePos; // go home
+        }
+        if (ghost.mode === GHOST_MODE.FRIGHTENED) {
+            // random target, not used directly; instead random direction at intersections
+            return null;
+        }
+        // chase or scatter
+        if (globalMode === GHOST_MODE.SCATTER) {
+            return ghost.scatterTarget;
+        } else { // CHASE
+            const pTile = pixelsToTile(pacman.x, pacman.y);
+            switch (ghost.id) {
+                case 0: // blinky: pacman tile
+                    return pTile;
+                case 1: // pinky: 2 tiles ahead of pacman direction
+                    let aheadRow = pTile.row + pacman.dir.dy * 2;
+                    let aheadCol = pTile.col + pacman.dir.dx * 2;
+                    // clamp to grid
+                    aheadRow = Math.min(ROWS-1, Math.max(0, aheadRow));
+                    aheadCol = Math.min(COLS-1, Math.max(0, aheadCol));
+                    return { row: aheadRow, col: aheadCol };
+                case 2: // inky: simplified: pacman tile + offset based on blinky
+                    // just target pacman for simplicity (but different color)
+                    return pTile;
+                case 3: // clyde: if distance > 5 target pacman else scatter bottom-left
+                    let dist = tileDistance(ghost.housePos.row, ghost.housePos.col, pTile.row, pTile.col);
+                    if (dist > 5) return pTile;
+                    else return { row: 20, col: 0 };
+                default: return pTile;
+            }
+        }
+    }
+
+    // ---------- MOVE ENTITIES ----------
+    function movePacman() {
+        if (!gameActive) return;
+
+        // try to apply nextDir at tile center
+        let tile = pixelsToTile(pacman.x, pacman.y);
+        let center = gridToPixels(tile.row, tile.col);
+        let atCenter = (Math.hypot(pacman.x - center.x, pacman.y - center.y) < 1.2);
+
+        if (atCenter) {
+            let nr = tile.row + pacman.nextDir.dy;
+            let nc = tile.col + pacman.nextDir.dx;
+            if (!isWallForPacman(nr, nc)) {
+                pacman.dir = { dx: pacman.nextDir.dx, dy: pacman.nextDir.dy };
+            } else {
+                // if current direction is blocked, stop
+                let cr = tile.row + pacman.dir.dy;
+                let cc = tile.col + pacman.dir.dx;
+                if (isWallForPacman(cr, cc)) {
+                    pacman.dir = { dx: 0, dy: 0 };
+                }
+            }
+        }
+
+        // move pacman
+        if (pacman.dir.dx !== 0 || pacman.dir.dy !== 0) {
+            let newX = pacman.x + pacman.dir.dx * PACMAN_SPEED;
+            let newY = pacman.y + pacman.dir.dy * PACMAN_SPEED;
+            // wrap tunnel
+            newX = handleWrap(newX, newY);
+            let newTile = pixelsToTile(newX, newY);
+            if (!isWallForPacman(newTile.row, newTile.col)) {
+                pacman.x = newX;
+                pacman.y = newY;
+            } else {
+                // snap to center
+                let curTile = pixelsToTile(pacman.x, pacman.y);
+                let cen = gridToPixels(curTile.row, curTile.col);
+                pacman.x = cen.x;
+                pacman.y = cen.y;
+                pacman.dir = { dx: 0, dy: 0 };
+            }
+        }
+    }
+
+    function moveGhosts() {
+        for (let g of ghosts) {
+            if (g.mode === GHOST_MODE.EATEN) {
+                // move toward house center
+                let target = gridToPixels(g.housePos.row, g.housePos.col);
+                let dx = target.x - g.x;
+                let dy = target.y - g.y;
+                let dist = Math.hypot(dx, dy);
+                if (dist < GHOST_SPEED) {
+                    g.x = target.x;
+                    g.y = target.y;
+                    // once at house, set to chase after a short delay? for now, set to chase immediately
+                    g.mode = globalMode; // back to current global mode
+                } else {
+                    g.x += (dx / dist) * GHOST_SPEED;
+                    g.y += (dy / dist) * GHOST_SPEED;
+                }
+                continue;
+            }
+
+            // decision at tile center
+            let tile = pixelsToTile(g.x, g.y);
+            let center = gridToPixels(tile.row, tile.col);
+            let atCenter = (Math.hypot(g.x - center.x, g.y - center.y) < 2.0);
+
+            if (atCenter) {
+                // possible directions (exclude reverse unless only option)
+                let dirs = [
+                    { dx: 1, dy: 0 },
+                    { dx: -1, dy: 0 },
+                    { dx: 0, dy: -1 },
+                    { dx: 0, dy: 1 }
+                ];
+                let validDirs = [];
+                for (let d of dirs) {
+                    let nr = tile.row + d.dy;
+                    let nc = tile.col + d.dx;
+                    if (!isWallForGhost(nr, nc)) {
+                        validDirs.push(d);
+                    }
+                }
+                // avoid reversing (except if only one valid)
+                let reverseDir = { dx: -g.dir.dx, dy: -g.dir.dy };
+                let canReverse = validDirs.length === 1; // only if it's the only option
+
+                let chosenDir = g.dir;
+                if (g.mode === GHOST_MODE.FRIGHTENED) {
+                    // random direction
+                    if (validDirs.length > 0) {
+                        let randomIdx = Math.floor(Math.random() * validDirs.length);
+                        chosenDir = validDirs[randomIdx];
+                    }
+                } else {
+                    // chase/scatter: pick direction that minimizes distance to target
+                    let target = getGhostTarget(g);
+                    if (target) {
+                        let bestDir = null;
+                        let bestDist = Infinity;
+                        for (let d of validDirs) {
+                            if (!canReverse && d.dx === reverseDir.dx && d.dy === reverseDir.dy) continue;
+                            let nr = tile.row + d.dy;
+                            let nc = tile.col + d.dx;
+                            let dist = tileDistance(nr, nc, target.row, target.col);
+                            if (dist < bestDist) {
+                                bestDist = dist;
+                                bestDir = d;
+                            }
+                        }
+                        if (bestDir) chosenDir = bestDir;
+                        else if (validDirs.length > 0) chosenDir = validDirs[0]; // fallback
+                    }
+                }
+                g.dir = chosenDir || g.dir;
+            }
+
+            // move ghost
+            if (g.dir.dx !== 0 || g.dir.dy !== 0) {
+                let newX = g.x + g.dir.dx * GHOST_SPEED;
+                let newY = g.y + g.dir.dy * GHOST_SPEED;
+                newX = handleWrap(newX, newY);
+                let newTile = pixelsToTile(newX, newY);
+                if (!isWallForGhost(newTile.row, newTile.col)) {
+                    g.x = newX;
+                    g.y = newY;
+                } else {
+                    // snap to center
+                    let cen = gridToPixels(tile.row, tile.col);
+                    g.x = cen.x;
+                    g.y = cen.y;
+                    g.dir = { dx: 0, dy: 0 };
+                }
+            }
+        }
+    }
+
+    // ---------- COLLISION & PELLETS ----------
+    function checkCollisions() {
+        if (!gameActive) return;
+
+        // pellet collection
+        let pacTile = pixelsToTile(pacman.x, pacman.y);
+        if (pellets[pacTile.row] && pellets[pacTile.row][pacTile.col]) {
+            pellets[pacTile.row][pacTile.col] = false;
+            pelletCount--;
+            score += 10;
+            updateScore();
+        }
+        if (powerPellets[pacTile.row] && powerPellets[pacTile.row][pacTile.col]) {
+            powerPellets[pacTile.row][pacTile.col] = false;
+            pelletCount--;
+            score += 50;
+            updateScore();
+            // activate frightened mode
+            frightenedTimer = FRIGHTENED_DURATION;
+            ghostScoreMultiplier = 1;
+            for (let g of ghosts) {
+                if (g.mode !== GHOST_MODE.EATEN) {
+                    g.mode = GHOST_MODE.FRIGHTENED;
+                }
+            }
+        }
+
+        // ghost vs pacman
+        for (let g of ghosts) {
+            let gTile = pixelsToTile(g.x, g.y);
+            if (gTile.row === pacTile.row && gTile.col === pacTile.col) {
+                if (g.mode === GHOST_MODE.FRIGHTENED) {
+                    // eat ghost
+                    g.mode = GHOST_MODE.EATEN;
+                    score += 200 * ghostScoreMultiplier;
+                    ghostScoreMultiplier *= 2;
+                    updateScore();
+                    // send ghost to house (will move there)
+                } else if (g.mode !== GHOST_MODE.EATEN) {
+                    gameActive = false;
+                    gameOverFlag = true;
+                    statusDiv.innerText = '💀 GAME OVER 💀';
+                    break;
+                }
+            }
+        }
+
+        // win condition
+        if (pelletCount === 0 && gameActive) {
+            gameActive = false;
+            winFlag = true;
+            statusDiv.innerText = '✨ PERFECT! ✨';
+        }
+    }
+
+    // ---------- MODE TIMERS ----------
+    function updateModes() {
+        if (!gameActive) return;
+
+        // scatter/chase cycle (every 10 seconds approx)
+        modeTimer++;
+        if (modeTimer > 600) { // ~10 sec at 60fps
+            modeTimer = 0;
+            scatterChaseSwitch = (scatterChaseSwitch + 1) % 2;
+            if (scatterChaseSwitch === 0) globalMode = GHOST_MODE.SCATTER;
+            else globalMode = GHOST_MODE.CHASE;
+
+            // update non-frightened ghosts
+            for (let g of ghosts) {
+                if (g.mode !== GHOST_MODE.FRIGHTENED && g.mode !== GHOST_MODE.EATEN) {
+                    g.mode = globalMode;
+                }
+            }
+        }
+
+        // frightened timer
+        if (frightenedTimer > 0) {
+            frightenedTimer--;
+            if (frightenedTimer === 0) {
+                for (let g of ghosts) {
+                    if (g.mode === GHOST_MODE.FRIGHTENED) {
+                        g.mode = globalMode;
+                    }
+                }
+            }
+        }
+    }
+
+    // ---------- RENDERING ----------
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // maze walls, pellets, power pellets
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                let x = c * TILE_SIZE;
+                let y = r * TILE_SIZE;
+                let ch = MAZE[r][c];
+
+                if (ch === 'W') {
+                    ctx.fillStyle = '#1f3860';
+                    ctx.fillRect(x, y, TILE_SIZE-0.5, TILE_SIZE-0.5);
+                    ctx.fillStyle = '#3f6ab0';
+                    ctx.fillRect(x+2, y+2, TILE_SIZE-4, TILE_SIZE-4);
+                    ctx.fillStyle = '#0a1a40';
+                    ctx.fillRect(x+1, y+1, TILE_SIZE-2, TILE_SIZE-2);
+                } else if (ch === 'G') {
+                    ctx.fillStyle = '#5f4c3b';
+                    ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE/2);
+                } else {
+                    if (pellets[r] && pellets[r][c]) {
+                        ctx.fillStyle = '#ffe8b0';
+                        ctx.beginPath();
+                        ctx.arc(x + TILE_SIZE/2, y + TILE_SIZE/2, 3, 0, 2*Math.PI);
+                        ctx.fill();
+                    }
+                    if (powerPellets[r] && powerPellets[r][c]) {
+                        ctx.fillStyle = '#ffd966';
+                        ctx.shadowColor = '#fd8';
+                        ctx.shadowBlur = 12;
+                        ctx.beginPath();
+                        ctx.arc(x + TILE_SIZE/2, y + TILE_SIZE/2, 8, 0, 2*Math.PI);
+                        ctx.fill();
+                        ctx.shadowBlur = 0;
+                    }
+                }
+            }
+        }
+
+        // ghosts
+        for (let g of ghosts) {
+            let color = g.color;
+            if (g.mode === GHOST_MODE.FRIGHTENED) {
+                color = '#a2c4ff'; // scared blue
+            } else if (g.mode === GHOST_MODE.EATEN) {
+                color = '#cccccc'; // eyes only? we draw just eyes
+            }
+            ctx.shadowColor = 'white';
+            ctx.shadowBlur = 14;
+            ctx.beginPath();
+            ctx.arc(g.x, g.y, TILE_SIZE/2 - 3, 0, 2 * Math.PI);
+            ctx.fillStyle = color;
+            ctx.fill();
+
+            // eyes
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            ctx.arc(g.x-5, g.y-4, 4, 0, 2*Math.PI);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(g.x+5, g.y-4, 4, 0, 2*Math.PI);
+            ctx.fill();
+            ctx.fillStyle = '#030617';
+            ctx.beginPath();
+            ctx.arc(g.x-6, g.y-5, 2, 0, 2*Math.PI);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(g.x+4, g.y-5, 2, 0, 2*Math.PI);
+            ctx.fill();
+        }
+
+        // pacman
+        let pacTile = pixelsToTile(pacman.x, pacman.y);
+        let angle = 0.25;
+        let start = 0.2, end = 2*Math.PI - 0.2;
+        if (pacman.dir.dx === 1) { start = 0.2; end = 2*Math.PI - 0.2; }
+        else if (pacman.dir.dx === -1) { start = Math.PI + 0.2; end = Math.PI - 0.2; }
+        else if (pacman.dir.dy === -1) { start = Math.PI/2 + 0.2; end = Math.PI/2 - 0.2; }
+        else if (pacman.dir.dy === 1) { start = 3*Math.PI/2 + 0.2; end = 3*Math.PI/2 - 0.2; }
+        ctx.shadowColor = '#fc0';
+        ctx.shadowBlur = 18;
+        ctx.beginPath();
+        ctx.moveTo(pacman.x, pacman.y);
+        ctx.arc(pacman.x, pacman.y, TILE_SIZE/2 - 3, start, end);
+        ctx.closePath();
+        ctx.fillStyle = '#f5c542';
+        ctx.fill();
+        ctx.shadowBlur = 0;
+    }
+
+    // ---------- UPDATE SCORE DISPLAY ----------
+    function updateScore() {
+        scoreSpan.textContent = score;
+    }
+
+    // ---------- GAME LOOP ----------
+    function gameLoop() {
+        if (gameActive) {
+            if (readyTimer > 0) {
+                readyTimer--;
+            } else {
+                updateModes();
+                movePacman();
+                moveGhosts();
+                checkCollisions();
+            }
+        }
+        draw();
+        requestAnimationFrame(gameLoop);
+    }
+
+    // ---------- INIT CANVAS & EVENT LISTENERS ----------
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreSpan = document.getElementById('scoreDisplay');
+    const statusDiv = document.getElementById('statusMessage');
+    const restartBtn = document.getElementById('restartBtn');
+
+    window.addEventListener('keydown', (e) => {
+        if (!gameActive) return;
+        if (e.key.startsWith('Arrow')) e.preventDefault();
+        if (e.key === 'ArrowRight') pacman.nextDir = { dx: 1, dy: 0 };
+        else if (e.key === 'ArrowLeft') pacman.nextDir = { dx: -1, dy: 0 };
+        else if (e.key === 'ArrowUp') pacman.nextDir = { dx: 0, dy: -1 };
+        else if (e.key === 'ArrowDown') pacman.nextDir = { dx: 0, dy: 1 };
+    });
+
+    restartBtn.addEventListener('click', () => {
+        resetGame();
+    });
+
+    // prevent page scrolling with arrows
+    window.addEventListener('keydown', (e) => {
+        if (e.key.startsWith('Arrow')) e.preventDefault();
+    }, { passive: false });
+
+    // start game
+    resetGame();
+    gameLoop();
+})();
+</script>
+</body>
+</html>
